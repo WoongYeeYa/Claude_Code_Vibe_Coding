@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(mkdir:*)",
+      "Bash(python hwp_converter.py:*)",
+      "Bash(python:*)",
+      "Bash(timeout:*)",
+      "Bash(tree:*)",
+      "Bash(dir:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(del start.bat start_server.bat install.bat stop_server.bat open_browser.bat)",
+      "mcp__Office-Word-MCP-Server__get_document_info",
+      "mcp__Office-Word-MCP-Server__get_document_outline",
+      "Bash(del:*)",
+      "Bash(git checkout:*)",
+      "Bash(copy backendhwp_converter.py backendhwp_converter.py.backup)",
+      "Read(//c/Users/arhyu/Desktop/**)",
+      "mcp__hwpx__open_info",
+      "mcp__Office-Word-MCP-Server__get_document_text",
+      "mcp__hwpx__read_text",
+      "mcp__hwpx__package_parts",
+      "mcp__hwpx__list_sections",
+      "mcp__hwpx__package_get_text",
+      "Bash(copy \"C:\\workspace\\Claude_Code_Vibe_Coding\\backend\\hwpx_writer.py\" \"C:\\workspace\\Claude_Code_Vibe_Coding\\backend\\hwpx_writer.py.backup\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

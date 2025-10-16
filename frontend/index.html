@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Word to HWP 변환 시스템</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 헤더 -->
+        <header class="header">
+            <h1>Word to HWP 변환 시스템</h1>
+            <div class="status-indicator" id="statusIndicator">
+                <span class="status-dot"></span>
+                <span class="status-text">시스템 확인 중...</span>
+            </div>
+        </header>
+
+        <!-- 메인 컨텐츠 -->
+        <main class="main-content">
+            <!-- 탭 네비게이션 -->
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="convert">파일 변환</button>
+                <button class="tab-btn" data-tab="templates">템플릿 관리</button>
+            </div>
+
+            <!-- 변환 탭 -->
+            <div id="convert-tab" class="tab-content active">
+                <section class="upload-section">
+                    <h2>워드 파일 업로드</h2>
+                    <div class="upload-area" id="uploadArea">
+                        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <p class="upload-text">클릭하거나 파일을 여기에 드래그하세요</p>
+                        <p class="upload-hint">.docx, .doc 파일만 지원됩니다</p>
+                        <input type="file" id="fileInput" accept=".docx,.doc" hidden>
+                    </div>
+
+                    <div class="uploaded-file" id="uploadedFile" style="display: none;">
+                        <div class="file-info">
+                            <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                                <polyline points="13 2 13 9 20 9"></polyline>
+                            </svg>
+                            <div class="file-details">
+                                <p class="file-name" id="fileName">-</p>
+                                <p class="file-size" id="fileSize">-</p>
+                            </div>
+                        </div>
+                        <button class="btn-remove" id="removeFileBtn">제거</button>
+                    </div>
+                </section>
+
+                <section class="action-section">
+                    <button class="btn-primary btn-convert" id="convertBtn" disabled>
+                        HWP로 변환
+                    </button>
+                    <button class="btn-secondary btn-save-template" id="saveTemplateBtn" disabled>
+                        템플릿으로 저장
+                    </button>
+                </section>
+
+                <section class="result-section" id="resultSection" style="display: none;">
+                    <div class="result-card">
+                        <div class="result-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                            </svg>
+                        </div>
+                        <h3>변환 완료!</h3>
+                        <p class="result-message" id="resultMessage">HWP 파일이 생성되었습니다</p>
+                        <button class="btn-primary btn-download" id="downloadBtn">
+                            다운로드
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 템플릿 관리 탭 -->
+            <div id="templates-tab" class="tab-content">
+                <section class="templates-section">
+                    <div class="templates-header">
+                        <h2>저장된 템플릿</h2>
+                        <button class="btn-secondary btn-refresh" id="refreshTemplatesBtn">
+                            새로고침
+                        </button>
+                    </div>
+
+                    <div class="templates-list" id="templatesList">
+                        <div class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                                <polyline points="13 2 13 9 20 9"></polyline>
+                            </svg>
+                            <p>저장된 템플릿이 없습니다</p>
+                            <p class="hint">파일 변환 탭에서 템플릿을 저장해보세요</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- 로딩 오버레이 -->
+        <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+            <div class="loading-spinner"></div>
+            <p class="loading-text" id="loadingText">처리 중...</p>
+        </div>
+
+        <!-- 템플릿 저장 모달 -->
+        <div class="modal" id="templateModal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>템플릿 저장</h3>
+                    <button class="modal-close" id="closeModalBtn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <label for="templateName">템플릿 이름</label>
+                    <input type="text" id="templateName" class="input-text" placeholder="예: 회사 공문서 양식">
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" id="cancelModalBtn">취소</button>
+                    <button class="btn-primary" id="confirmSaveBtn">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

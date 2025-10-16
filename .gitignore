@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 업로드 및 출력 파일
+uploads/*
+!uploads/.gitkeep
+outputs/*
+!outputs/.gitkeep
+templates/*
+!templates/.gitkeep
+
+# 로그
+*.log
+
+# 환경 변수
+.env
+.env.local
+
+# 테스트
+.pytest_cache/
+.coverage
+htmlcov/
