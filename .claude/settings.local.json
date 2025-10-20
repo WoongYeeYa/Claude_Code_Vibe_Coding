@@ -22,7 +22,12 @@
       "mcp__hwpx__package_parts",
       "mcp__hwpx__list_sections",
       "mcp__hwpx__package_get_text",
-      "Bash(copy \"C:\\workspace\\Claude_Code_Vibe_Coding\\backend\\hwpx_writer.py\" \"C:\\workspace\\Claude_Code_Vibe_Coding\\backend\\hwpx_writer.py.backup\")"
+      "Bash(copy \"C:\\workspace\\Claude_Code_Vibe_Coding\\backend\\hwpx_writer.py\" \"C:\\workspace\\Claude_Code_Vibe_Coding\\backend\\hwpx_writer.py.backup\")",
+      "Bash(findstr:*)",
+      "WebFetch(domain:martinii.fun)",
+      "Bash(taskkill:*)",
+      "Bash(cat backend/converter.log)",
+      "Bash(cat converter.log)"
     ],
     "deny": [],
     "ask": []

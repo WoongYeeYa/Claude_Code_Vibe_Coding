@@ -1,567 +1,493 @@
 """
-한컴오피스 한글 COM 자동화 모듈
-Word 파일을 HWP 파일로 변환
+한글 2018 COM API를 이용한 DOCX to HWP 변환 모듈
+완전 수동 재구성 버전 - 모든 요소를 COM API로 직접 그림
 """
 import os
 import win32com.client
 import pythoncom
-import logging
 from docx import Document
-from docx.oxml.text.paragraph import CT_P
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.table import CT_Tbl
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.oxml.text.paragraph import CT_P
+from docx.table import Table
+import logging
 
-logging.basicConfig(level=logging.INFO)
+# 로깅 설정
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+log_handler = logging.FileHandler("converter.log", mode='w', encoding='utf-8')
+log_handler.setFormatter(log_formatter)
+root_logger = logging.getLogger()
+if root_logger.hasHandlers():
+    root_logger.handlers.clear()
+root_logger.addHandler(log_handler)
+root_logger.setLevel(logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 
+# -----------------------------------------------------------------------------
+# 한글 2018 COM API 헬퍼 함수들
+# -----------------------------------------------------------------------------
 
-class HWPConverter:
-    """한컴오피스 한글 자동화 클래스"""
+def _hwp_insert_text(hwp, text):
+    """텍스트를 HWP에 삽입"""
+    if not text:
+        return
+    try:
+        hwp.HAction.GetDefault("InsertText", hwp.HParameterSet.HInsertText.HSet)
+        hwp.HParameterSet.HInsertText.Text = text
+        hwp.HAction.Execute("InsertText", hwp.HParameterSet.HInsertText.HSet)
+    except Exception as e:
+        logger.error(f"텍스트 삽입 실패: {e}")
 
-    def __init__(self):
-        self.hwp = None
-        self.is_initialized = False
+def _hwp_break_para(hwp):
+    """문단 나누기"""
+    try:
+        hwp.HAction.Run("BreakPara")
+    except Exception as e:
+        logger.error(f"문단 나누기 실패: {e}")
 
-    def initialize(self):
-        """한글 프로그램 초기화 (백그라운드 모드, 보안 경고 없음)"""
-        try:
-            # 기존 인스턴스 완전히 정리
-            if self.hwp:
-                try:
-                    self.hwp.Quit()
-                except:
-                    pass
-                finally:
-                    self.hwp = None
+def _hwp_set_char_shape(hwp, bold=None, italic=None, underline=None, font_size_pt=None, color_rgb=None, font_name=None):
+    """
+    글자 모양 설정
+    한글 2018 COM API를 사용하여 현재 커서 위치의 글자 모양 변경
+    """
+    try:
+        act = hwp.CreateAction("CharShape")
+        pset = act.CreateSet()
+        act.GetDefault(pset)
 
-            # 잠시 대기 (프로세스 종료 대기)
-            import time
-            time.sleep(0.5)
+        # 굵게
+        if bold is not None:
+            pset.SetItem("Bold", 1 if bold else 0)
 
-            pythoncom.CoInitialize()
-            self.hwp = win32com.client.Dispatch("HWPFrame.HwpObject")
+        # 기울임
+        if italic is not None:
+            pset.SetItem("Italic", 1 if italic else 0)
 
-            # 한글 창 숨기기
-            try:
-                self.hwp.XHwpWindows.Active_XHwpWindow.Visible = False
-            except:
-                pass
+        # 밑줄
+        if underline is not None:
+            pset.SetItem("Underline", 1 if underline else 0)
 
-            try:
-                self.hwp.Visible = False
-            except:
-                pass
+        # 글자 크기 (포인트 -> hwp 단위: pt * 100)
+        if font_size_pt is not None:
+            pset.SetItem("Height", int(font_size_pt * 100))
 
-            # 보안 경고 자동 허용
-            self.hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
+        # 글자 색상 (RGB -> BGR)
+        if color_rgb is not None:
+            r, g, b = color_rgb
+            bgr = (b << 16) | (g << 8) | r
+            pset.SetItem("TextColor", bgr)
 
-            try:
-                self.hwp.HParameterSet.HFileOpenSave.AutoAction = True
-            except:
-                pass
+        # 글꼴 이름
+        if font_name is not None:
+            pset.SetItem("FaceNameHangul", font_name)
+            pset.SetItem("FaceNameLatin", font_name)
+            pset.SetItem("FaceNameHanja", font_name)
+            pset.SetItem("FaceNameJapanese", font_name)
+            pset.SetItem("FaceNameOther", font_name)
+            pset.SetItem("FaceNameSymbol", font_name)
+            pset.SetItem("FaceNameUser", font_name)
 
-            self.is_initialized = True
-            logger.info("한컴오피스 한글 초기화 성공 (백그라운드 모드)")
-            return True
-        except Exception as e:
-            logger.error(f"한컴오피스 한글 초기화 실패: {str(e)}")
-            import traceback
-            logger.error(f"상세 에러: {traceback.format_exc()}")
-            self.is_initialized = False
-            return False
+        act.Execute(pset)
+        logger.debug(f"글자 서식 적용: bold={bold}, italic={italic}, size={font_size_pt}")
 
-    def close(self):
-        """한글 프로그램 종료"""
-        try:
-            if self.hwp:
-                try:
-                    self.hwp.Quit()
-                except:
-                    pass
-                finally:
-                    self.hwp = None
+    except Exception as e:
+        logger.warning(f"글자 서식 적용 실패: {e}")
 
-            try:
-                pythoncom.CoUninitialize()
-            except:
-                pass
+def _hwp_set_alignment(hwp, alignment):
+    """
+    문단 정렬 설정 (Run 액션 방식)
+    """
+    try:
+        align_commands = {
+            WD_ALIGN_PARAGRAPH.LEFT: "ParagraphShapeAlignLeft",
+            WD_ALIGN_PARAGRAPH.CENTER: "ParagraphShapeAlignCenter",
+            WD_ALIGN_PARAGRAPH.RIGHT: "ParagraphShapeAlignRight",
+            WD_ALIGN_PARAGRAPH.JUSTIFY: "ParagraphShapeAlignJustify",
+            0: "ParagraphShapeAlignLeft",
+            1: "ParagraphShapeAlignCenter",
+            2: "ParagraphShapeAlignRight",
+            3: "ParagraphShapeAlignJustify"
+        }
 
-            self.is_initialized = False
-            logger.info("한컴오피스 한글 종료")
+        cmd = align_commands.get(alignment)
+        if cmd:
+            hwp.Run(cmd)
+            logger.debug(f"정렬 적용: {cmd}")
+    except Exception as e:
+        logger.warning(f"정렬 적용 실패: {e}")
 
-            # 프로세스 완전 정리를 위한 대기
-            import time
-            time.sleep(0.3)
+def _hwp_set_para_shape(hwp, alignment=None, left_margin=None, right_margin=None, first_line_indent=None,
+                        line_spacing=None, space_before=None, space_after=None):
+    """
+    문단 모양 설정
+    한글 2018 COM API를 사용하여 현재 문단의 모양 변경
+    """
+    try:
+        act = hwp.CreateAction("ParagraphShape")
+        pset = act.CreateSet()
+        act.GetDefault(pset)
 
-        except Exception as e:
-            logger.error(f"한컴오피스 한글 종료 실패: {str(e)}")
+        # 왼쪽 여백 (포인트 -> hwp 단위: pt * 100)
+        if left_margin is not None:
+            pset.SetItem("LeftMargin", int(left_margin * 100))
 
-    def get_hwp_version(self):
-        """설치된 한글 버전 확인"""
-        try:
-            if not self.is_initialized:
-                self.initialize()
+        # 오른쪽 여백
+        if right_margin is not None:
+            pset.SetItem("RightMargin", int(right_margin * 100))
 
-            version = self.hwp.Version
-            logger.info(f"한컴오피스 한글 버전: {version}")
-            return version
-        except Exception as e:
-            logger.error(f"버전 확인 실패: {str(e)}")
-            return None
+        # 첫줄 들여쓰기
+        if first_line_indent is not None:
+            pset.SetItem("IndentFirst", int(first_line_indent * 100))
 
-    def _apply_paragraph_format(self, paragraph):
-        """문단 서식 적용 (정렬, 들여쓰기 등)"""
-        try:
-            # 문단 모양 가져오기
-            self.hwp.HAction.GetDefault("ParagraphShape", self.hwp.HParameterSet.HParaShape.HSet)
+        # 줄 간격 (0: 고정값, 1: 배수)
+        if line_spacing is not None:
+            pset.SetItem("LineSpacingType", 1)  # 배수로 설정
+            pset.SetItem("LineSpacing", int(line_spacing * 100))
 
-            # 정렬 설정
-            alignment_map = {
-                WD_PARAGRAPH_ALIGNMENT.LEFT: 0,      # 왼쪽
-                WD_PARAGRAPH_ALIGNMENT.CENTER: 1,     # 가운데
-                WD_PARAGRAPH_ALIGNMENT.RIGHT: 2,      # 오른쪽
-                WD_PARAGRAPH_ALIGNMENT.JUSTIFY: 3,    # 양쪽
-                None: 0  # 기본값: 왼쪽
-            }
+        # 문단 위 간격
+        if space_before is not None:
+            pset.SetItem("SpaceBefore", int(space_before * 100))
 
-            alignment = alignment_map.get(paragraph.alignment, 0)
-            self.hwp.HParameterSet.HParaShape.Align = alignment
+        # 문단 아래 간격
+        if space_after is not None:
+            pset.SetItem("SpaceAfter", int(space_after * 100))
 
-            # 들여쓰기 설정 (twips 단위를 hwp 단위로 변환)
-            if paragraph.paragraph_format.left_indent:
-                try:
-                    left_indent = int(paragraph.paragraph_format.left_indent.twips * 0.05)
-                    self.hwp.HParameterSet.HParaShape.IndentLeft = left_indent
-                except:
-                    pass
+        act.Execute(pset)
+        logger.debug(f"문단 서식 적용: left={left_margin}, first={first_line_indent}")
 
-            if paragraph.paragraph_format.first_line_indent:
-                try:
-                    first_indent = int(paragraph.paragraph_format.first_line_indent.twips * 0.05)
-                    self.hwp.HParameterSet.HParaShape.IndentFirst = first_indent
-                except:
-                    pass
+    except Exception as e:
+        logger.warning(f"문단 서식 적용 실패: {e}")
 
-            # 문단 간격 설정
-            if paragraph.paragraph_format.space_before:
-                try:
-                    space_before = int(paragraph.paragraph_format.space_before.twips * 0.05)
-                    self.hwp.HParameterSet.HParaShape.SpaceAbove = space_before
-                except:
-                    pass
+def _hwp_insert_table(hwp, rows, cols):
+    """
+    표 삽입
+    """
+    try:
+        act = hwp.CreateAction("TableCreate")
+        pset = act.CreateSet()
+        act.GetDefault(pset)
 
-            if paragraph.paragraph_format.space_after:
-                try:
-                    space_after = int(paragraph.paragraph_format.space_after.twips * 0.05)
-                    self.hwp.HParameterSet.HParaShape.SpaceBelow = space_after
-                except:
-                    pass
+        pset.SetItem("Rows", rows)
+        pset.SetItem("Cols", cols)
+        pset.SetItem("WidthType", 0)  # 0: 본문과 같게
+        pset.SetItem("HeightType", 0)  # 0: 자동
+        pset.SetItem("CreateItemArray", "TableProperties")
 
-            # 문단 서식 적용
-            self.hwp.HAction.Execute("ParagraphShape", self.hwp.HParameterSet.HParaShape.HSet)
+        act.Execute(pset)
+        logger.info(f"표 생성: {rows}행 x {cols}열")
+        return True
 
-        except Exception as e:
-            logger.debug(f"문단 서식 적용 실패 (무시): {str(e)}")
+    except Exception as e:
+        logger.error(f"표 생성 실패: {e}")
+        return False
 
-    def _convert_run(self, run):
-        """Run 단위로 텍스트와 서식 변환"""
-        if not run.text or run.text == "":
+def _hwp_goto_table_cell(hwp, row, col):
+    """표의 특정 셀로 이동"""
+    try:
+        hwp.HAction.GetDefault("TableCellBlock", hwp.HParameterSet.HTableCellBlock.HSet)
+        hwp.HParameterSet.HTableCellBlock.StartRow = row
+        hwp.HParameterSet.HTableCellBlock.StartCol = col
+        hwp.HParameterSet.HTableCellBlock.EndRow = row
+        hwp.HParameterSet.HTableCellBlock.EndCol = col
+        hwp.HAction.Execute("TableCellBlock", hwp.HParameterSet.HTableCellBlock.HSet)
+        return True
+    except Exception as e:
+        logger.error(f"셀 이동 실패 ({row}, {col}): {e}")
+        return False
+
+# -----------------------------------------------------------------------------
+# DOCX 파싱 및 변환 함수들
+# -----------------------------------------------------------------------------
+
+def _convert_paragraph(hwp, para):
+    """
+    DOCX 문단을 HWP로 변환
+    정렬 + Run별 텍스트 삽입 + 문단 나누기 후 들여쓰기 적용
+    """
+    try:
+        # 1. 정렬 먼저 적용
+        para_format = para.paragraph_format
+        alignment = para.alignment if para.alignment else WD_ALIGN_PARAGRAPH.LEFT
+
+        # 정렬 적용 (Run 액션 방식)
+        if alignment is not None:
+            _hwp_set_alignment(hwp, alignment)
+
+        # 2. Run별 텍스트 삽입
+        # Run이 없으면 단순 텍스트 삽입
+        if not para.runs or len(para.runs) == 0:
+            if para.text.strip():
+                _hwp_insert_text(hwp, para.text)
+        else:
+            # Run별로 처리
+            for run in para.runs:
+                if not run.text:
+                    continue
+
+                # 글자 서식 추출
+                bold = run.bold
+                italic = run.italic
+                underline = run.underline
+
+                # 폰트 크기
+                font_size = None
+                if run.font.size:
+                    font_size = run.font.size.pt
+
+                # 폰트 색상
+                color_rgb = None
+                if run.font.color and run.font.color.rgb:
+                    color_rgb = (run.font.color.rgb[0], run.font.color.rgb[1], run.font.color.rgb[2])
+
+                # 폰트 이름
+                font_name = run.font.name
+
+                # 글자 서식을 먼저 설정 (다음에 삽입될 텍스트에 적용됨)
+                if bold is not None or italic is not None or underline is not None or font_size or color_rgb or font_name:
+                    _hwp_set_char_shape(
+                        hwp,
+                        bold=bold,
+                        italic=italic,
+                        underline=underline,
+                        font_size_pt=font_size,
+                        color_rgb=color_rgb,
+                        font_name=font_name
+                    )
+
+                # 텍스트 삽입
+                _hwp_insert_text(hwp, run.text)
+
+        # 3. 들여쓰기 적용 (문단 나누기 전에)
+        left_indent = para_format.left_indent.pt if para_format.left_indent else 0
+        right_indent = para_format.right_indent.pt if para_format.right_indent else 0
+        first_line_indent = para_format.first_line_indent.pt if para_format.first_line_indent else 0
+
+        # 문단 간격
+        space_before = para_format.space_before.pt if para_format.space_before else 0
+        space_after = para_format.space_after.pt if para_format.space_after else 0
+
+        # 들여쓰기/간격 적용 (기본값이 아닐 때만)
+        if (left_indent != 0 or right_indent != 0 or first_line_indent != 0 or
+            space_before != 0 or space_after != 0):
+            _hwp_set_para_shape(
+                hwp,
+                left_margin=left_indent,
+                right_margin=right_indent,
+                first_line_indent=first_line_indent,
+                space_before=space_before,
+                space_after=space_after
+            )
+
+        # 4. 문단 나누기
+        _hwp_break_para(hwp)
+
+    except Exception as e:
+        logger.error(f"문단 변환 실패: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+def _convert_table(hwp, table):
+    """
+    DOCX 표를 HWP로 변환
+    """
+    try:
+        rows = len(table.rows)
+        cols = len(table.columns)
+
+        logger.info(f"표 변환 시작: {rows}행 x {cols}열")
+
+        # 표 생성
+        if not _hwp_insert_table(hwp, rows, cols):
             return
 
-        # 서식 적용
-        self.hwp.HAction.GetDefault("CharShape", self.hwp.HParameterSet.HCharShape.HSet)
-
-        try:
-            # 굵기
-            if run.bold:
-                self.hwp.HParameterSet.HCharShape.Bold = 1
-
-            # 기울임
-            if run.italic:
-                self.hwp.HParameterSet.HCharShape.Italic = 1
-
-            # 밑줄
-            if run.underline:
-                try:
-                    self.hwp.HParameterSet.HCharShape.UnderlineType = 1
-                except:
-                    pass
-
-            # 폰트
-            if run.font.name:
-                try:
-                    self.hwp.HParameterSet.HCharShape.FaceNameHangul = run.font.name
-                    self.hwp.HParameterSet.HCharShape.FaceNameLatin = run.font.name
-                    self.hwp.HParameterSet.HCharShape.FaceNameHanja = run.font.name
-                    self.hwp.HParameterSet.HCharShape.FaceNameJapanese = run.font.name
-                    self.hwp.HParameterSet.HCharShape.FaceNameOther = run.font.name
-                    self.hwp.HParameterSet.HCharShape.FaceNameSymbol = run.font.name
-                    self.hwp.HParameterSet.HCharShape.FaceNameUser = run.font.name
-                except:
-                    pass
-
-            # 폰트 크기
-            if run.font.size:
-                try:
-                    font_size_pt = run.font.size.pt if hasattr(run.font.size, 'pt') else 10
-                    self.hwp.HParameterSet.HCharShape.Height = int(font_size_pt * 100)
-                except:
-                    pass
-
-            # 글자 색상
-            if run.font.color and run.font.color.rgb:
-                try:
-                    rgb = run.font.color.rgb
-                    # RGB를 HWP 색상 값으로 변환
-                    color_value = (rgb[0]) + (rgb[1] << 8) + (rgb[2] << 16)
-                    self.hwp.HParameterSet.HCharShape.TextColor = color_value
-                except:
-                    pass
-
-            # 서식 적용
-            self.hwp.HAction.Execute("CharShape", self.hwp.HParameterSet.HCharShape.HSet)
-        except Exception as e:
-            logger.warning(f"서식 적용 중 일부 실패: {str(e)}")
-
-        # 텍스트 입력
-        self.hwp.HAction.GetDefault("InsertText", self.hwp.HParameterSet.HInsertText.HSet)
-        self.hwp.HParameterSet.HInsertText.Text = run.text
-        self.hwp.HAction.Execute("InsertText", self.hwp.HParameterSet.HInsertText.HSet)
-
-    def _convert_paragraph(self, paragraph):
-        """문단 변환 (서식 포함)"""
-        # 문단 서식 먼저 적용
-        self._apply_paragraph_format(paragraph)
-
-        # Run별로 텍스트와 서식 적용
-        has_text = False
-        if paragraph.runs:
-            for run in paragraph.runs:
-                if run.text:  # 빈 텍스트가 아닌 경우만
-                    self._convert_run(run)
-                    has_text = True
-
-        # runs가 없거나 runs에 텍스트가 없는 경우
-        if not has_text and paragraph.text.strip():
-            self.hwp.HAction.GetDefault("InsertText", self.hwp.HParameterSet.HInsertText.HSet)
-            self.hwp.HParameterSet.HInsertText.Text = paragraph.text
-            self.hwp.HAction.Execute("InsertText", self.hwp.HParameterSet.HInsertText.HSet)
-
-    def _get_merged_cells_info(self, table):
-        """병합된 셀 정보 추출"""
-        merged_cells = []
-
+        # 각 셀에 내용 채우기
         for row_idx, row in enumerate(table.rows):
             for col_idx, cell in enumerate(row.cells):
-                # 셀의 grid span 확인
-                tc = cell._element
-                tcPr = tc.tcPr
+                # 셀로 이동
+                if not _hwp_goto_table_cell(hwp, row_idx, col_idx):
+                    continue
 
-                if tcPr is not None:
-                    # 수직 병합 확인
-                    vMerge = tcPr.vMerge
-                    if vMerge is not None:
-                        # vMerge가 있으면 병합된 셀
-                        val = vMerge.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
-                        if val == 'restart' or val is None:
-                            # 병합 시작 셀
-                            # 아래로 몇 개 병합되는지 계산
-                            merge_count = 1
-                            for check_row_idx in range(row_idx + 1, len(table.rows)):
-                                check_cell = table.rows[check_row_idx].cells[col_idx]
-                                check_tc = check_cell._element
-                                check_tcPr = check_tc.tcPr
-                                if check_tcPr is not None:
-                                    check_vMerge = check_tcPr.vMerge
-                                    if check_vMerge is not None:
-                                        check_val = check_vMerge.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
-                                        if check_val == 'continue' or (check_val is None and check_vMerge is not None):
-                                            merge_count += 1
-                                        else:
-                                            break
-                                    else:
-                                        break
-                                else:
-                                    break
+                # 셀 내용 삽입 (문단들)
+                for para in cell.paragraphs:
+                    if para.text.strip():
+                        _convert_paragraph(hwp, para)
 
-                            if merge_count > 1:
-                                merged_cells.append({
-                                    'row': row_idx,
-                                    'col': col_idx,
-                                    'rowspan': merge_count,
-                                    'colspan': 1
-                                })
+        # 표 밖으로 나가기
+        hwp.HAction.Run("TableRightTopCell")
+        hwp.HAction.Run("BreakPara")
 
-                    # 수평 병합 확인
-                    gridSpan = tcPr.gridSpan
-                    if gridSpan is not None:
-                        span = int(gridSpan.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val', 1))
-                        if span > 1:
-                            # 이미 vertical merge로 추가된 셀이면 colspan 업데이트
-                            found = False
-                            for mc in merged_cells:
-                                if mc['row'] == row_idx and mc['col'] == col_idx:
-                                    mc['colspan'] = span
-                                    found = True
-                                    break
-                            if not found:
-                                merged_cells.append({
-                                    'row': row_idx,
-                                    'col': col_idx,
-                                    'rowspan': 1,
-                                    'colspan': span
-                                })
+        logger.info("표 변환 완료")
 
-        return merged_cells
+    except Exception as e:
+        logger.error(f"표 변환 실패: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
-    def _convert_table(self, table):
-        """표 변환 (셀 병합, 테두리 포함)"""
-        try:
-            rows = len(table.rows)
-            cols = len(table.columns) if rows > 0 else 0
+def _convert_document_body(hwp, doc):
+    """
+    DOCX 본문을 HWP로 변환
+    """
+    try:
+        total_elements = len(doc.element.body)
+        logger.info(f"본문 요소 {total_elements}개 변환 시작")
 
-            if rows == 0 or cols == 0:
-                return
+        for idx, element in enumerate(doc.element.body):
+            # 문단인 경우
+            if isinstance(element, CT_P):
+                para = None
+                for p in doc.paragraphs:
+                    if p._element == element:
+                        para = p
+                        break
 
-            logger.info(f"표 변환 중: {rows}행 x {cols}열")
+                if para:
+                    logger.debug(f"[{idx+1}/{total_elements}] 문단 변환: {para.text[:30]}...")
+                    _convert_paragraph(hwp, para)
 
-            # 병합 정보 추출
-            merged_cells = self._get_merged_cells_info(table)
-            logger.info(f"병합된 셀: {len(merged_cells)}개")
+            # 표인 경우
+            elif isinstance(element, CT_Tbl):
+                table = None
+                for t in doc.tables:
+                    if t._element == element:
+                        table = t
+                        break
 
-            # HWP에 표 삽입
-            self.hwp.HAction.GetDefault("TableCreate", self.hwp.HParameterSet.HTableCreation.HSet)
-            self.hwp.HParameterSet.HTableCreation.Rows = rows
-            self.hwp.HParameterSet.HTableCreation.Cols = cols
-            self.hwp.HParameterSet.HTableCreation.WidthType = 2  # 문서 너비에 맞춤
-            self.hwp.HParameterSet.HTableCreation.HeightType = 0  # 자동
-            self.hwp.HParameterSet.HTableCreation.CreateItemArray("ColWidth", cols)
+                if table:
+                    logger.debug(f"[{idx+1}/{total_elements}] 표 변환")
+                    _convert_table(hwp, table)
 
-            # 각 열의 너비를 균등하게 설정
-            col_width = int(60000 / cols)
-            for i in range(cols):
-                self.hwp.HParameterSet.HTableCreation.ColWidth.SetItem(i, col_width)
+            if (idx + 1) % 10 == 0:
+                logger.info(f"진행중... {idx+1}/{total_elements}")
 
-            # 표 생성
-            result = self.hwp.HAction.Execute("TableCreate", self.hwp.HParameterSet.HTableCreation.HSet)
+        logger.info("본문 변환 완료")
 
-            if not result:
-                logger.warning("표 생성 실패")
-                return
+    except Exception as e:
+        logger.error(f"본문 변환 실패: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
-            # 표의 첫 번째 셀로 이동
-            self.hwp.Run("TableCellBlock")
-            self.hwp.Run("Cancel")
+# -----------------------------------------------------------------------------
+# 메인 변환 함수
+# -----------------------------------------------------------------------------
 
-            # 각 셀에 내용 채우기
-            for row_idx, row in enumerate(table.rows):
-                for col_idx, cell in enumerate(row.cells):
-                    # 셀 내용 변환
-                    cell_text = cell.text.strip()
+def perform_conversion(docx_path: str, hwp_path: str) -> bool:
+    """
+    한글 2018 COM API를 사용하여 DOCX를 HWP로 완전 수동 변환
+    """
+    hwp = None
+    try:
+        # COM 초기화
+        pythoncom.CoInitialize()
 
-                    # 셀의 정렬 확인
-                    if cell.paragraphs:
-                        first_para = cell.paragraphs[0]
-                        alignment_map = {
-                            WD_PARAGRAPH_ALIGNMENT.LEFT: 0,
-                            WD_PARAGRAPH_ALIGNMENT.CENTER: 1,
-                            WD_PARAGRAPH_ALIGNMENT.RIGHT: 2,
-                            WD_PARAGRAPH_ALIGNMENT.JUSTIFY: 3,
-                            None: 0
-                        }
-                        alignment = alignment_map.get(first_para.alignment, 0)
+        logger.info("=" * 70)
+        logger.info("한글 2018 COM API 수동 변환 시작")
+        logger.info("=" * 70)
 
-                        # 셀 정렬 설정
-                        try:
-                            self.hwp.HAction.GetDefault("CellBorderFill", self.hwp.HParameterSet.HCellBorderFill.HSet)
-                            self.hwp.HParameterSet.HCellBorderFill.Align = alignment
-                            self.hwp.HAction.Execute("CellBorderFill", self.hwp.HParameterSet.HCellBorderFill.HSet)
-                        except:
-                            pass
+        # HWP 오브젝트 생성
+        hwp = win32com.client.Dispatch("HWPFrame.HwpObject")
+        hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
+        hwp.SetMessageBoxMode(0x00010000)  # 메시지 박스 표시 안함
 
-                    if cell_text:
-                        # 텍스트 입력
-                        self.hwp.HAction.GetDefault("InsertText", self.hwp.HParameterSet.HInsertText.HSet)
-                        self.hwp.HParameterSet.HInsertText.Text = cell_text
-                        self.hwp.HAction.Execute("InsertText", self.hwp.HParameterSet.HInsertText.HSet)
+        logger.info(f"한글 버전: {hwp.Version}")
 
-                    # 다음 셀로 이동 (마지막 셀이 아닌 경우)
-                    if not (row_idx == rows - 1 and col_idx == cols - 1):
-                        self.hwp.Run("TableRightCell")
+        # 절대 경로 변환
+        abs_docx_path = os.path.abspath(docx_path)
+        abs_hwp_path = os.path.abspath(hwp_path)
 
-            # 셀 병합 처리
-            if merged_cells:
-                logger.info(f"셀 병합 처리 시작: {len(merged_cells)}개")
-                for merge_info in merged_cells:
-                    try:
-                        # 병합 시작 셀로 이동
-                        # 표의 첫 셀로 이동
-                        self.hwp.Run("TableCellBlock")
-                        self.hwp.Run("Cancel")
+        logger.info(f"입력: {abs_docx_path}")
+        logger.info(f"출력: {abs_hwp_path}")
 
-                        # 목표 셀까지 이동
-                        for r in range(merge_info['row']):
-                            self.hwp.Run("TableDownCell")
-                        for c in range(merge_info['col']):
-                            self.hwp.Run("TableRightCell")
-
-                        # 병합할 범위 선택
-                        self.hwp.Run("TableCellBlockExtend")
-
-                        # 아래로 확장
-                        for r in range(merge_info['rowspan'] - 1):
-                            self.hwp.Run("TableLowerCellAppend")
-
-                        # 오른쪽으로 확장
-                        for c in range(merge_info['colspan'] - 1):
-                            self.hwp.Run("TableRightCellAppend")
-
-                        # 셀 병합 실행
-                        self.hwp.Run("TableMergeCell")
-
-                        logger.debug(f"셀 병합 완료: ({merge_info['row']},{merge_info['col']}) {merge_info['rowspan']}x{merge_info['colspan']}")
-                    except Exception as e:
-                        logger.warning(f"셀 병합 실패: {str(e)}")
-
-            # 표 밖으로 나가기
-            self.hwp.HAction.Run("TableOut")
-
-            logger.info("표 변환 완료")
-
-        except Exception as e:
-            logger.error(f"표 변환 실패: {str(e)}")
-            import traceback
-            logger.error(f"상세 에러: {traceback.format_exc()}")
-
-    def convert_docx_to_hwp(self, docx_path: str, hwp_path: str) -> bool:
-        """
-        DOCX 파일을 HWP 파일로 변환
-        python-docx로 파싱 후 HWP로 재구성
-
-        Args:
-            docx_path: 변환할 DOCX 파일 경로
-            hwp_path: 저장할 HWP 파일 경로
-
-        Returns:
-            bool: 변환 성공 여부
-        """
-        try:
-            # 매번 새로 초기화
-            logger.info("한글 프로그램 초기화 중...")
-            if not self.initialize():
-                logger.error("한글 프로그램 초기화 실패")
-                return False
-
-            # 경로를 절대 경로로 변환
-            docx_path = os.path.abspath(docx_path)
-            hwp_path = os.path.abspath(hwp_path)
-
-            # 파일 존재 확인
-            if not os.path.exists(docx_path):
-                logger.error(f"DOCX 파일을 찾을 수 없습니다: {docx_path}")
-                return False
-
-            logger.info(f"변환 시작: {docx_path} -> {hwp_path}")
-
-            # DOCX 파일 파싱
+        # 기존 파일 삭제
+        if os.path.exists(abs_hwp_path):
             try:
-                doc = Document(docx_path)
-                logger.info(f"DOCX 파일 파싱 완료: {len(doc.paragraphs)}개 문단")
+                os.remove(abs_hwp_path)
+                logger.info("기존 HWP 파일 삭제 완료")
             except Exception as e:
-                logger.error(f"DOCX 파일 파싱 실패: {str(e)}")
-                return False
+                logger.warning(f"기존 파일 삭제 실패: {e}")
 
-            # 새 HWP 문서 생성
-            self.hwp.HAction.Run("FileNew")
-            logger.info("새 HWP 문서 생성")
+        # DOCX 문서 로드
+        logger.info("DOCX 파일 로드 중...")
+        doc = Document(abs_docx_path)
+        logger.info(f"문단 수: {len(doc.paragraphs)}, 표 수: {len(doc.tables)}")
 
-            # 문서 요소별로 변환
-            for element in doc.element.body:
-                if isinstance(element, CT_P):  # 문단
-                    # Document 객체에서 해당 문단 찾기
-                    for para in doc.paragraphs:
-                        if para._element == element:
-                            self._convert_paragraph(para)
-                            # 문단 끝에 Enter
-                            self.hwp.HAction.Run("BreakPara")
-                            break
+        # 빈 HWP 문서 생성
+        logger.info("빈 HWP 문서 생성...")
+        hwp.HAction.Run("FileNew")
 
-                elif isinstance(element, CT_Tbl):  # 표
-                    # Document 객체에서 해당 표 찾기
-                    for table in doc.tables:
-                        if table._element == element:
-                            self._convert_table(table)
-                            # 표 다음에 Enter
-                            self.hwp.HAction.Run("BreakPara")
-                            break
+        # 본문 변환
+        logger.info("본문 변환 시작...")
+        _convert_document_body(hwp, doc)
 
-            # HWPX 파일로 저장
-            logger.info(f"HWPX 파일로 저장: {hwp_path}")
-            save_result = self.hwp.SaveAs(hwp_path, "HWPX", "")
+        # 파일 저장
+        logger.info("HWP 파일 저장 중...")
+        hwp.SaveAs(abs_hwp_path, "HWP", "")
 
-            if save_result:
-                logger.info(f"SaveAs 성공")
-            else:
-                logger.warning(f"SaveAs 반환값: {save_result}")
-
-            # 문서 닫기
-            self.hwp.Clear(1)
-
-            # 변환 결과 확인
-            if os.path.exists(hwp_path):
-                file_size = os.path.getsize(hwp_path)
-                logger.info(f"변환 성공: {hwp_path} (크기: {file_size} bytes)")
-
-                # 한글 프로그램 종료
-                try:
-                    self.hwp.Quit()
-                    self.hwp = None
-                    self.is_initialized = False
-                    logger.info("한글 프로그램 종료")
-                except:
-                    pass
-
-                return True
-            else:
-                logger.error("HWP 파일이 생성되지 않았습니다")
-
-                # 한글 프로그램 종료
-                try:
-                    self.hwp.Quit()
-                    self.hwp = None
-                    self.is_initialized = False
-                except:
-                    pass
-
-                return False
-
-        except Exception as e:
-            import traceback
-            logger.error(f"변환 실패: {str(e)}")
-            logger.error(f"상세 에러: {traceback.format_exc()}")
-            try:
-                self.hwp.Clear(1)
-            except:
-                pass
-
-            # 한글 프로그램 종료
-            try:
-                if self.hwp:
-                    self.hwp.Quit()
-                    self.hwp = None
-                    self.is_initialized = False
-            except:
-                pass
-
+        # 저장 확인
+        if os.path.exists(abs_hwp_path):
+            file_size = os.path.getsize(abs_hwp_path)
+            logger.info(f"✓ 변환 성공! 파일 크기: {file_size:,} bytes")
+            logger.info(f"✓ 저장 위치: {abs_hwp_path}")
+            return True
+        else:
+            logger.error("✗ 파일이 생성되지 않았습니다")
             return False
 
-    def check_hwp_installed(self) -> bool:
-        """한컴오피스 한글 설치 여부 확인"""
+    except Exception as e:
+        logger.error(f"✗ 변환 실패: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
+    finally:
+        # HWP 종료
+        if hwp:
+            try:
+                hwp.Quit()
+                logger.info("한글 프로세스 종료")
+            except:
+                pass
+            del hwp
+
+        # COM 해제
+        pythoncom.CoUninitialize()
+        logger.info("=" * 70)
+
+# -----------------------------------------------------------------------------
+# 래퍼 클래스 (main.py와 호환성 유지)
+# -----------------------------------------------------------------------------
+
+class HWPConverter:
+    """HWP 변환기 클래스"""
+
+    def convert_docx_to_hwp(self, docx_path: str, hwp_path: str) -> bool:
+        """DOCX를 HWP로 변환"""
+        logger.info(f"변환 요청: {os.path.basename(docx_path)} -> {os.path.basename(hwp_path)}")
+        return perform_conversion(docx_path, hwp_path)
+
+    def check_hwp_installed(self):
+        """한글 설치 여부 확인"""
+        hwp = None
         try:
             pythoncom.CoInitialize()
             hwp = win32com.client.Dispatch("HWPFrame.HwpObject")
-            hwp.Quit()
+
+            version = hwp.Version
+            version_str = str(version)
+
+            logger.info(f"한글 설치 확인: {version_str}")
+            return True, version_str
+
+        except Exception as e:
+            logger.error(f"한글 확인 실패: {e}")
+            return False, "Not Installed"
+
+        finally:
+            if hwp:
+                try:
+                    hwp.Quit()
+                except:
+                    pass
+                del hwp
             pythoncom.CoUninitialize()
-            return True
-        except:
-            return False

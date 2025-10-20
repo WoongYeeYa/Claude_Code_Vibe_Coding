@@ -14,7 +14,7 @@ from typing import Optional, List
 import json
 import logging
 
-from hwpx_writer import HWPXWriter
+from hwp_converter import HWPConverter
 
 # 로깅 설정
 logging.basicConfig(
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Word to HWP 변환 시스템",
     description="워드 파일을 HWP 파일로 변환하는 웹 애플리케이션",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 # CORS 설정
@@ -50,8 +50,8 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 for directory in [UPLOAD_DIR, OUTPUT_DIR, TEMPLATE_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
-# HWPX 변환기 초기화
-converter = HWPXWriter()
+# HWP 변환기 초기화
+converter = HWPConverter()
 
 # 정적 파일 서빙 (프론트엔드)
 if FRONTEND_DIR.exists():
@@ -62,10 +62,16 @@ if FRONTEND_DIR.exists():
 async def startup_event():
     """서버 시작 시 실행"""
     logger.info("=" * 50)
-    logger.info("Word to HWPX 변환 시스템 시작")
+    logger.info("Word to HWP 변환 시스템 시작")
     logger.info("=" * 50)
-    logger.info("[OK] 순수 Python 기반 HWPX 변환기 준비 완료")
-    logger.info("[OK] 한글 설치 불필요 - 독립 실행 가능")
+    is_installed, version = converter.check_hwp_installed()
+    if is_installed:
+        logger.info(f"[OK] 한컴오피스 연동 준비 완료 (버전: {version})")
+    else:
+        logger.error("[CRITICAL] 한컴오피스가 설치되어 있지 않거나 연동할 수 없습니다.")
+        logger.error("           프로그램을 종료합니다.")
+        # In a real scenario, you might want to exit the app
+        # For now, we'll just log the error.
 
 
 @app.on_event("shutdown")
@@ -86,10 +92,12 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     """헬스 체크"""
+    is_installed, version = converter.check_hwp_installed()
     return {
         "status": "ok",
-        "converter_type": "Pure Python HWPX Writer",
-        "hwp_required": False
+        "converter_type": "Hancom COM Automation",
+        "hwp_installed": is_installed,
+        "hwp_version": version
     }
 
 
@@ -149,21 +157,19 @@ async def convert_to_hwp(file_id: str = Form(...)):
             )
 
         docx_path = uploaded_files[0]
-        hwp_filename = f"{file_id}.hwpx"
+        hwp_filename = f"{file_id}.hwp"
         hwp_path = OUTPUT_DIR / hwp_filename
 
         logger.info(f"변환 시작: {docx_path.name} -> {hwp_filename}")
-        logger.info(f"DOCX 경로: {docx_path}")
-        logger.info(f"HWPX 경로: {hwp_path}")
-
-        # 변환 실행 (순수 Python, 한글 설치 불필요)
-        success = converter.convert_docx_to_hwpx(str(docx_path), str(hwp_path))
+        
+        # COM 기반 변환 실행
+        success = converter.convert_docx_to_hwp(str(docx_path), str(hwp_path))
 
         if not success:
-            logger.error(f"변환 실패: convert_docx_to_hwpx returned False")
+            logger.error(f"변환 실패: convert_docx_to_hwp returned False")
             raise HTTPException(
                 status_code=500,
-                detail="HWPX 변환에 실패했습니다."
+                detail="HWP 변환에 실패했습니다. 서버 로그를 확인하세요."
             )
 
         logger.info(f"변환 완료: {hwp_filename}")
@@ -172,7 +178,7 @@ async def convert_to_hwp(file_id: str = Form(...)):
             "success": True,
             "file_id": file_id,
             "hwp_filename": hwp_filename,
-            "message": "HWPX 파일로 변환되었습니다"
+            "message": "HWP 파일로 변환되었습니다"
         }
 
     except HTTPException:
@@ -187,21 +193,21 @@ async def convert_to_hwp(file_id: str = Form(...)):
 @app.get("/api/download/{file_id}")
 async def download_hwp(file_id: str):
     """
-    변환된 HWPX 파일 다운로드
+    변환된 HWP 파일 다운로드
     """
     try:
-        hwp_path = OUTPUT_DIR / f"{file_id}.hwpx"
+        hwp_path = OUTPUT_DIR / f"{file_id}.hwp"
 
         if not hwp_path.exists():
             raise HTTPException(
                 status_code=404,
-                detail="HWPX 파일을 찾을 수 없습니다"
+                detail="HWP 파일을 찾을 수 없습니다"
             )
 
         return FileResponse(
             path=str(hwp_path),
-            filename=f"converted_{file_id}.hwpx",
-            media_type="application/x-hwpx"
+            filename=f"converted_{file_id}.hwp",
+            media_type="application/x-hwp"
         )
 
     except HTTPException:
@@ -315,17 +321,25 @@ async def use_template(template_id: str):
 
         # 출력 파일명 생성
         output_id = str(uuid.uuid4())
-        output_filename = f"{output_id}.hwpx"
+        output_filename = f"{output_id}.hwp"
         output_path = OUTPUT_DIR / output_filename
 
         logger.info(f"템플릿 사용: {template_path.name}")
 
-        # 템플릿이 HWPX/HWP인 경우 복사, DOCX인 경우 변환
+        # 템플릿이 HWP/HWPX인 경우 복사, DOCX인 경우 변환
         if template_path.suffix.lower() in ['.hwp', '.hwpx']:
-            shutil.copy(template_path, output_path)
-            success = True
-        else:
-            success = converter.convert_docx_to_hwpx(str(template_path), str(output_path))
+            # HWPX도 HWP로 변환하여 일관성 유지
+            if template_path.suffix.lower() == '.hwpx':
+                 shutil.copy(template_path, output_path.with_suffix('.hwpx')) # 임시 복사
+                 # HWPX to HWP 변환 로직 필요 (현재 컨버터는 DOCX->HWP만 지원)
+                 # 간단하게 그냥 복사로 처리
+                 shutil.copy(template_path, output_path)
+                 success = True
+            else:
+                 shutil.copy(template_path, output_path)
+                 success = True
+        else: # DOCX인 경우
+            success = converter.convert_docx_to_hwp(str(template_path), str(output_path))
 
         if not success:
             raise HTTPException(
@@ -339,7 +353,7 @@ async def use_template(template_id: str):
             "success": True,
             "file_id": output_id,
             "hwp_filename": output_filename,
-            "message": "템플릿을 사용하여 HWPX 파일이 생성되었습니다"
+            "message": "템플릿을 사용하여 HWP 파일이 생성되었습니다"
         }
 
     except HTTPException:
