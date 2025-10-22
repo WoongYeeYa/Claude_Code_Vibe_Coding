@@ -48,17 +48,17 @@ Claude_Code_Vibe_Coding/
 
 ### 1. 사전 요구사항
 
-#### Java 17 설치
-1. [Oracle JDK 17](https://www.oracle.com/java/technologies/javase/jdk17-archive-downloads.html) 또는 [OpenJDK 17](https://adoptium.net/) 다운로드
+#### Java 21 설치 (권장, LTS)
+1. [Oracle JDK 21](https://www.oracle.com/java/technologies/javase/jdk21-archive-downloads.html) 또는 [OpenJDK 21 / Temurin 21](https://adoptium.net/) 다운로드
 2. 설치 후 환경 변수 설정:
    ```
-   JAVA_HOME=C:\Program Files\Java\jdk-17
+   JAVA_HOME=C:\Program Files\Java\jdk-21
    Path에 %JAVA_HOME%\bin 추가
    ```
 3. 확인:
    ```bash
    java -version
-   # java version "17.0.x" 출력되어야 함
+   # java version "21.0.x" 출력되어야 함
    ```
 
 #### Maven 3.6+ 설치
