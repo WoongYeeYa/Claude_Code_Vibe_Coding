@@ -82,7 +82,11 @@
       "Bash(cmd.exe /c start \"\" \"C:\\workspace\\Claude_Code_Vibe_Coding2\\Claude_Code_Vibe_Coding\\outputs\\이력서_zipfix_test.hwp\")",
       "Bash(\"/c/Program Files/Java/jdk-17/bin/javac\" -encoding UTF-8 -cp \"target/docx-to-hwp-converter-1.0.0.jar\" TestDocxEncoding.java)",
       "Bash(\"/c/Program Files/Java/jdk-21/bin/javac\" -encoding UTF-8 -cp \"target/docx-to-hwp-converter-1.0.0.jar\" TestDocxEncoding.java)",
-      "Bash(\"/c/Program Files/Java/jdk-21/bin/javac\" -encoding UTF-8 -cp \"C:\\Users\\arhyu\\.m2\\repository\\org\\apache\\poi\\poi-ooxml\\5.2.3\\poi-ooxml-5.2.3.jar;C:\\Users\\arhyu\\.m2\\repository\\org\\apache\\poi\\poi\\5.2.3\\poi-5.2.3.jar\" TestDocxEncoding.java)"
+      "Bash(\"/c/Program Files/Java/jdk-21/bin/javac\" -encoding UTF-8 -cp \"C:\\Users\\arhyu\\.m2\\repository\\org\\apache\\poi\\poi-ooxml\\5.2.3\\poi-ooxml-5.2.3.jar;C:\\Users\\arhyu\\.m2\\repository\\org\\apache\\poi\\poi\\5.2.3\\poi-5.2.3.jar\" TestDocxEncoding.java)",
+      "Bash(\"/c/Program Files/apache-maven-3.9.11/bin/mvn\" --version)",
+      "Bash(\"/c/Program Files/Apache/maven/bin/mvn\" --version)",
+      "Bash(\"/c/apache-maven-3.9.11/bin/mvn\" --version)",
+      "Bash(\"/c/Program Files/apache-maven-3.9.11/bin/mvn\" clean install -DskipTests -Dmaven.javadoc.skip=true -Dgpg.skip=true)"
     ],
     "deny": [],
     "ask": []
